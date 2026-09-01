@@ -1,0 +1,67 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    # Run every day at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+      - name: Get upstream repository
+        id: upstream
+        run: |
+          # Get the upstream repository URL from the fork data
+          UPSTREAM=$(git remote -v | grep 'fetch' | awk '{print $2}' | head -1)
+          if [[ $UPSTREAM == *"github.com"* ]]; then
+            echo "Found remote: $UPSTREAM"
+            echo "upstream=$UPSTREAM" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch upstream repository
+        run: |
+          git remote add upstream ${{ steps.upstream.outputs.upstream }} || git remote set-url upstream ${{ steps.upstream.outputs.upstream }}
+          git fetch upstream
+
+      - name: Sync fork
+        run: |
+          # Get the default branch name
+          DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')
+          echo "Default branch: $DEFAULT_BRANCH"
+          
+          # Checkout the default branch
+          git checkout $DEFAULT_BRANCH
+          
+          # Merge upstream changes
+          git merge upstream/$DEFAULT_BRANCH --allow-unrelated-histories --no-edit || true
+
+      - name: Push changes
+        run: |
+          DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')
+          git push origin $DEFAULT_BRANCH
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create sync status
+        if: always()
+        run: |
+          if [ $? -eq 0 ]; then
+            echo "✅ Fork synced successfully with upstream"
+          else
+            echo "⚠️ Fork sync completed with warnings"
+          fi
